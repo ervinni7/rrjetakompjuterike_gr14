@@ -12,7 +12,7 @@
 #define PORT        5000
 #define HTTP_PORT   8080
 #define MAX_CONN    10
-#define TIMEOUT_SEC 60
+#define TIMEOUT_SEC 600
 #define BUF_SIZE    4096
 #define SERVER_DIR  "server_files"
 
@@ -268,4 +268,214 @@ static void process_command(SOCKET fd, const char *line, const char *privilege) 
         snprintf(msg, sizeof(msg), "Komanda e panjohur: %s. Shkruani /help.\n", cmd);
         send_str(fd, msg);
     }
+}
+/* ====================================================
+ *  THREAD I KLIENTIT
+ * ==================================================== */
+static DWORD WINAPI client_thread(LPVOID arg) {
+    ClientInfo *ci = (ClientInfo *)arg;
+    SOCKET fd = ci->fd;
+
+    printf("[+] Klient: %s | Privilegji: %s\n", ci->ip, ci->privilege);
+
+    /* regjistro ne statistika */
+    EnterCriticalSection(&stats_lock);
+    stats.active_connections++;
+    if (stats.ip_count < MAX_CONN)
+        strncpy(stats.client_ips[stats.ip_count++], ci->ip, INET_ADDRSTRLEN-1);
+    LeaveCriticalSection(&stats_lock);
+
+    /* vendos timeout */
+    DWORD tv = TIMEOUT_SEC * 1000;
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+
+    /* mesazhi i mireseardhjeve */
+    char welcome[128];
+    snprintf(welcome, sizeof(welcome),
+        "Miresevini! Privilegji juaj: %s\nShkruani /help per komandat.\n",
+        ci->privilege);
+    send_str(fd, welcome);
+
+    /* loop kryesor: merr dhe proceso komandat */
+    char buf[BUF_SIZE];
+    while (1) {
+        memset(buf, 0, sizeof(buf));
+        int n = recv(fd, buf, sizeof(buf)-1, 0);
+        if (n <= 0) {
+            printf("[!] Shkepotje/Timeout per %s\n", ci->ip);
+            break;
+        }
+        buf[strcspn(buf, "\r\n")] = '\0';
+        if (strlen(buf) == 0) continue;
+
+        printf("[%s] %s\n", ci->ip, buf);
+
+        /* perditeso statistikat */
+        EnterCriticalSection(&stats_lock);
+        stats.total_messages++;
+        if (stats.msg_count < MAX_CONN)
+            strncpy(stats.last_messages[stats.msg_count++], buf, 255);
+        LeaveCriticalSection(&stats_lock);
+
+        process_command(fd, buf, ci->privilege);
+    }
+
+    /* çregjistro klientin */
+    EnterCriticalSection(&stats_lock);
+    stats.active_connections--;
+    LeaveCriticalSection(&stats_lock);
+
+    printf("[-] Klienti u shkeput: %s\n", ci->ip);
+    closesocket(fd);
+    free(ci);
+    return 0;
+}
+
+/* ====================================================
+ *  HTTP SERVER THREAD (port 8080 -> /stats)
+ * ==================================================== */
+static DWORD WINAPI http_thread(LPVOID arg) {
+    (void)arg;
+    SOCKET sfd = socket(AF_INET, SOCK_STREAM, 0);
+    int opt = 1;
+    setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons(HTTP_PORT);
+    bind(sfd, (struct sockaddr*)&addr, sizeof(addr));
+    listen(sfd, 5);
+    printf("[HTTP] Duke degjuar ne port %d -> /stats\n", HTTP_PORT);
+
+    while (1) {
+        SOCKET cfd = accept(sfd, NULL, NULL);
+        if (cfd == INVALID_SOCKET) continue;
+
+        /* lexo request */
+        char req[512] = {0};
+        recv(cfd, req, sizeof(req)-1, 0);
+
+        /* nderto pergjigjen JSON */
+        char json[4096] = {0};
+        EnterCriticalSection(&stats_lock);
+        int pos = 0;
+        pos += snprintf(json+pos, sizeof(json)-pos,
+            "{\n"
+            "  \"lidhjet_aktive\": %d,\n"
+            "  \"total_mesazhe\": %d,\n"
+            "  \"ip_adresat\": [",
+            stats.active_connections, stats.total_messages);
+        for (int i = 0; i < stats.ip_count; i++)
+            pos += snprintf(json+pos, sizeof(json)-pos,
+                "%s\"%s\"", i?",":"", stats.client_ips[i]);
+        pos += snprintf(json+pos, sizeof(json)-pos,
+            "],\n  \"mesazhet_e_fundit\": [");
+        for (int i = 0; i < stats.msg_count; i++)
+            pos += snprintf(json+pos, sizeof(json)-pos,
+                "%s\"%s\"", i?",":"", stats.last_messages[i]);
+        pos += snprintf(json+pos, sizeof(json)-pos, "]\n}\n");
+        LeaveCriticalSection(&stats_lock);
+
+        /* dergo pergjigjen HTTP */
+        char response[5120];
+        snprintf(response, sizeof(response),
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "Content-Length: %d\r\n"
+            "Connection: close\r\n"
+            "\r\n%s",
+            (int)strlen(json), json);
+        send(cfd, response, (int)strlen(response), 0);
+        closesocket(cfd);
+    }
+    return 0;
+}
+
+/* ====================================================
+ *  MAIN - SERVERI KRYESOR
+ * ==================================================== */
+int main(void) {
+    /* Inicializo Winsock */
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
+        printf("Gabim: WSAStartup deshtoi.\n");
+        return 1;
+    }
+
+    /* Krijo direktorine e serverit */
+    CreateDirectory(SERVER_DIR, NULL);
+
+    /* Inicializo mutex */
+    InitializeCriticalSection(&stats_lock);
+
+    /* Fillo HTTP thread */
+    HANDLE ht = CreateThread(NULL, 0, http_thread, NULL, 0, NULL);
+    CloseHandle(ht);
+
+    /* Krijo socket kryesor TCP */
+    SOCKET server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd == INVALID_SOCKET) {
+        printf("Gabim: socket() deshtoi.\n");
+        WSACleanup(); return 1;
+    }
+
+    int opt = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&opt, sizeof(opt));
+
+    struct sockaddr_in addr = {0};
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons(PORT);
+
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        printf("Gabim: bind() deshtoi.\n"); WSACleanup(); return 1;
+    }
+    if (listen(server_fd, MAX_CONN) == SOCKET_ERROR) {
+        printf("Gabim: listen() deshtoi.\n"); WSACleanup(); return 1;
+    }
+
+    printf("[SERVER] Duke degjuar ne port %d\n", PORT);
+    printf("[SERVER] Monitorim: http://localhost:%d/stats\n", HTTP_PORT);
+    printf("[SERVER] Max lidhje: %d | Timeout: %ds\n", MAX_CONN, TIMEOUT_SEC);
+    printf("--------------------------------------------------\n");
+
+    /* Loop kryesor: prano lidhje te reja */
+    while (1) {
+        struct sockaddr_in cli_addr;
+        int cli_len = sizeof(cli_addr);
+        SOCKET cli_fd = accept(server_fd, (struct sockaddr*)&cli_addr, &cli_len);
+        if (cli_fd == INVALID_SOCKET) continue;
+
+        /* kontrollo nese serveri eshte plot */
+        EnterCriticalSection(&stats_lock);
+        int aktive = stats.active_connections;
+        LeaveCriticalSection(&stats_lock);
+
+        if (aktive >= MAX_CONN) {
+            send_str(cli_fd, "Serveri eshte plot. Provo me vone.\n");
+            closesocket(cli_fd); continue;
+        }
+
+        /* cakto privilegjet */
+        ClientInfo *ci = malloc(sizeof(ClientInfo));
+        ci->fd = cli_fd;
+        inet_ntop(AF_INET, &cli_addr.sin_addr, ci->ip, sizeof(ci->ip));
+
+        if (!admin_assigned) {
+            strcpy(ci->privilege, "admin");
+            admin_assigned = 1;
+        } else {
+            strcpy(ci->privilege, "read");
+        }
+
+        /* fillo thread per klientin */
+        HANDLE tid = CreateThread(NULL, 0, client_thread, ci, 0, NULL);
+        CloseHandle(tid);
+    }
+
+    closesocket(server_fd);
+    DeleteCriticalSection(&stats_lock);
+    WSACleanup();
+    return 0;
 }
