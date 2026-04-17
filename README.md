@@ -23,14 +23,30 @@ Ky projekt implementon një **TCP server-klient** sistem në gjuhën **C** me k�
 - Lidhet me serverin duke specifikuar IP dhe portin
 - Dërgon mesazhe tekst dhe lexon përgjigjet
 - Klienti admin ka qasje të plotë në komandat e file-ave
+- 
+### Komandat
 
+| Komanda | Përshkrimi | Admin | Read-Only |
+|---------|-----------|-------|-----------|
+| `/list` | Listo file-at në server | ✅ | ✅ |
+| `/read <filename>` | Lexo përmbajtjen e file-it | ✅ | ✅ |
+| `/upload <filename>` | Ngarko file në server | ✅ | ❌ |
+| `/download <filename>` | Shkarko file nga serveri | ✅ | ❌ |
+| `/delete <filename>` | Fshi file nga serveri | ✅ | ❌ |
+| `/search <keyword>` | Kërko file sipas fjalës kyçe | ✅ | ✅ |
+| `/info <filename>` | Shfaq madhësinë dhe datat | ✅ | ✅ |
+| `/help` | Shfaq ndihmën | ✅ | ✅ |
+| `/quit` | Dil nga serveri | ✅ | ✅ |
+
+---
 
 
 ## Ekzekutimi
 
 ### Hapi 1: Starto serverin
-bash
-./server.exe
+```bash
+./server
+```
 Serveri do të dëgjojë në portin 5000 (TCP) dhe 8080 (HTTP).
 
 ### Hapi 2: Lidhu me klient (nga pajisje të ndryshme në rrjet)
