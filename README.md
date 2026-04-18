@@ -22,8 +22,7 @@ Ky projekt implementon një **TCP server-klient** sistem në gjuhën **C** me k�
 ### Klienti (`client.c`)
 - Lidhet me serverin duke specifikuar IP dhe portin
 - Dërgon mesazhe tekst dhe lexon përgjigjet
-- Klienti admin ka qasje të plotë në komandat e file-ave
-- 
+- Klienti admin ka qasje të plotë në komandat e file-ave 
 ### Komandat
 
 | Komanda | Përshkrimi | Admin | Read-Only |
@@ -45,17 +44,17 @@ Ky projekt implementon një **TCP server-klient** sistem në gjuhën **C** me k�
 
 ### Hapi 1: Starto serverin
 ```bash
-./server
+./server.exe
 ```
 Serveri do të dëgjojë në portin 5000 (TCP) dhe 8080 (HTTP).
 
 ### Hapi 2: Lidhu me klient (nga pajisje të ndryshme në rrjet)
 ```bash
 # Klienti i parë (do të jetë ADMIN):
-./client 192.168.1.100 12345
+./client 192.168.1.100 5000
 
 # Klientët tjerë (READ-ONLY):
-./client 192.168.1.100 12345
+./client 192.168.1.100 5000
 ```
 
 **Shënim:** Zëvendëso `192.168.1.100` me IP-në reale të serverit.
