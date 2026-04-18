@@ -8,15 +8,16 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
-/* ==================== KONFIGURIMI ==================== */
+/* KONFIGURIMI  */
 #define PORT        5000
 #define HTTP_PORT   8080
+#define SERVER_IP   "0.0.0.0"
 #define MAX_CONN    10
 #define TIMEOUT_SEC 600
 #define BUF_SIZE    4096
 #define SERVER_DIR  "server_files"
 
-/* ==================== STATISTIKAT ==================== */
+/* STATISTIKAT  */
 typedef struct {
     int  active_connections;
     char client_ips[MAX_CONN][INET_ADDRSTRLEN];
@@ -30,23 +31,17 @@ static Stats            stats;
 static CRITICAL_SECTION stats_lock;
 static int              admin_assigned = 0;
 
-/* ==================== STRUKTURA E KLIENTIT ==================== */
+/* STRUKTURA E KLIENTIT */
 typedef struct {
     SOCKET fd;
     char   ip[INET_ADDRSTRLEN];
     char   privilege[8];
 } ClientInfo;
 
-/* ====================================================
- *  NDIHMES: Dergo string
- * ==================================================== */
 static int send_str(SOCKET fd, const char *msg) {
     return send(fd, msg, (int)strlen(msg), 0);
 }
 
-/* ====================================================
- *  KOMANDA: /list
- * ==================================================== */
 static void cmd_list(SOCKET fd) {
     WIN32_FIND_DATA ffd;
     char pattern[512];
@@ -70,9 +65,7 @@ static void cmd_list(SOCKET fd) {
     if (!found) send_str(fd, "  (asnje file)\n");
 }
 
-/* ====================================================
- *  KOMANDA: /read <filename>
- * ==================================================== */
+/*  KOMANDA: /read <filename>*/ 
 static void cmd_read(SOCKET fd, const char *filename) {
     char path[512];
     snprintf(path, sizeof(path), "%s\\%s", SERVER_DIR, filename);
@@ -91,9 +84,7 @@ static void cmd_read(SOCKET fd, const char *filename) {
     send_str(fd, "\n");
 }
 
-/* ====================================================
- *  KOMANDA: /search <keyword>
- * ==================================================== */
+/* KOMANDA: /search <keyword> */
 static void cmd_search(SOCKET fd, const char *keyword) {
     WIN32_FIND_DATA ffd;
     char pattern[512];
@@ -120,9 +111,7 @@ static void cmd_search(SOCKET fd, const char *keyword) {
     if (!found) send_str(fd, "  Nuk u gjet asnje file.\n");
 }
 
-/* ====================================================
- *  KOMANDA: /info <filename>
- * ==================================================== */
+/*KOMANDA: /info <filename> */
 static void cmd_info(SOCKET fd, const char *filename) {
     char path[512];
     snprintf(path, sizeof(path), "%s\\%s", SERVER_DIR, filename);
@@ -151,9 +140,7 @@ static void cmd_info(SOCKET fd, const char *filename) {
     send_str(fd, buf);
 }
 
-/* ====================================================
- *  KOMANDA: /download <filename>
- * ==================================================== */
+/*KOMANDA: /download <filename>*/
 static void cmd_download(SOCKET fd, const char *filename) {
     char path[512];
     snprintf(path, sizeof(path), "%s\\%s", SERVER_DIR, filename);
@@ -173,9 +160,7 @@ static void cmd_download(SOCKET fd, const char *filename) {
     send_str(fd, "\nDOWNLOAD_END\n");
 }
 
-/* ====================================================
- *  KOMANDA: /upload <filename> (vetem admin)
- * ==================================================== */
+/* KOMANDA: /upload <filename> (vetem admin)*/
 static void cmd_upload(SOCKET fd, const char *filename) {
     char msg[256];
     snprintf(msg, sizeof(msg), "GATI_PER_UPLOAD:%s\n", filename);
@@ -207,9 +192,7 @@ static void cmd_upload(SOCKET fd, const char *filename) {
     send_str(fd, msg);
 }
 
-/* ====================================================
- *  KOMANDA: /delete <filename> (vetem admin)
- * ==================================================== */
+/*KOMANDA: /delete <filename> (vetem admin)*/
 static void cmd_delete(SOCKET fd, const char *filename) {
     char path[512];
     snprintf(path, sizeof(path), "%s\\%s", SERVER_DIR, filename);
@@ -222,9 +205,7 @@ static void cmd_delete(SOCKET fd, const char *filename) {
     }
 }
 
-/* ====================================================
- *  KOMANDA: /help
- * ==================================================== */
+/*KOMANDA: /help*/
 static void cmd_help(SOCKET fd, const char *privilege) {
     send_str(fd,
         "Komandat e disponueshme:\n"
@@ -242,10 +223,10 @@ static void cmd_help(SOCKET fd, const char *privilege) {
     send_str(fd, "  /help               - Shfaq kete liste\n");
 }
 
-/* ====================================================
- *  PROCESIMI I KOMANDES
- * ==================================================== */
+/*PROCESIMI I KOMANDES*/
 static void process_command(SOCKET fd, const char *line, const char *privilege) {
+    if (strcmp(privilege, "read") == 0)
+        Sleep(100);
     char cmd[64] = {0}, arg[512] = {0};
     sscanf(line, "%63s %511[^\n]", cmd, arg);
 
@@ -269,9 +250,7 @@ static void process_command(SOCKET fd, const char *line, const char *privilege) 
         send_str(fd, msg);
     }
 }
-/* ====================================================
- *  THREAD I KLIENTIT
- * ==================================================== */
+/*THREAD I KLIENTIT*/
 static DWORD WINAPI client_thread(LPVOID arg) {
     ClientInfo *ci = (ClientInfo *)arg;
     SOCKET fd = ci->fd;
@@ -286,8 +265,8 @@ static DWORD WINAPI client_thread(LPVOID arg) {
     LeaveCriticalSection(&stats_lock);
 
     /* vendos timeout */
-    DWORD tv = TIMEOUT_SEC * 1000;
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
+   DWORD tv = TIMEOUT_SEC * 1000;  /* 600 sekonda si me pare */
+   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof(tv));
 
     /* mesazhi i mireseardhjeve */
     char welcome[128];
@@ -331,9 +310,7 @@ static DWORD WINAPI client_thread(LPVOID arg) {
     return 0;
 }
 
-/* ====================================================
- *  HTTP SERVER THREAD (port 8080 -> /stats)
- * ==================================================== */
+/* HTTP SERVER THREAD (port 8080 -> /stats)*/
 static DWORD WINAPI http_thread(LPVOID arg) {
     (void)arg;
     SOCKET sfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -342,7 +319,7 @@ static DWORD WINAPI http_thread(LPVOID arg) {
 
     struct sockaddr_in addr = {0};
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = INADDR_ANY;
+    inet_pton(AF_INET, SERVER_IP, &addr.sin_addr);
     addr.sin_port        = htons(HTTP_PORT);
     bind(sfd, (struct sockaddr*)&addr, sizeof(addr));
     listen(sfd, 5);
@@ -392,9 +369,8 @@ static DWORD WINAPI http_thread(LPVOID arg) {
     return 0;
 }
 
-/* ====================================================
- *  MAIN - SERVERI KRYESOR
- * ==================================================== */
+/*MAIN - SERVERI KRYESOR*/
+
 int main(void) {
     /* Inicializo Winsock */
     WSADATA wsa;
@@ -434,7 +410,7 @@ int main(void) {
     if (listen(server_fd, MAX_CONN) == SOCKET_ERROR) {
         printf("Gabim: listen() deshtoi.\n"); WSACleanup(); return 1;
     }
-
+    printf("[SERVER] IP: %s\n", SERVER_IP);   
     printf("[SERVER] Duke degjuar ne port %d\n", PORT);
     printf("[SERVER] Monitorim: http://localhost:%d/stats\n", HTTP_PORT);
     printf("[SERVER] Max lidhje: %d | Timeout: %ds\n", MAX_CONN, TIMEOUT_SEC);
