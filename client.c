@@ -32,3 +32,27 @@ void handle_download(SOCKET sock, char *header){
     fclose(f);
     printf("File u shkarkua: %s (%ld bytes)\n",filename,received);
 }
+ 
+void handle_upload(SOCKET sock, char *filename){
+    FILE *f = fopen(filename, "rb");
+    if(!f){
+        printf("File nuk ekziston\n");
+        return;
+    }
+    fseek(f,0,SEEK_END);
+    long size = ftell(f);
+    rewind(f);
+
+    char header[64];
+    sprintf(header, "SIZE%ld\n",size);
+    send(sock,header,strlen(header),0);
+
+    char buf[BUF_SIZE];
+    int n;
+
+    while((n=fread(buf,1,sizeof(buf),f))>0){
+        send(sock,buf,n,0);
+    }
+    fclose(f);
+    printf("Upload perfundoi\n");
+}
